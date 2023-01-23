@@ -4,8 +4,7 @@ import { useState } from "react";
 
 import WebBundlr from "@bundlr-network/client/build/web";
 import { PublicKey } from "@solana/web3.js";
-import arrayBufferToBase64 from "./arrayBufferToBase64";
-import base64ToArrayBuffer from "./base64ToArrayBuffer";
+import fileReaderStream from "filereader-stream";
 
 if (
 	!process.env.NEXT_PUBLIC_BUNDLR_NETWORK_NODE ||
@@ -18,116 +17,92 @@ const bundlrNode = process.env.NEXT_PUBLIC_BUNDLR_NETWORK_NODE;
 const publicKey = new PublicKey(process.env.NEXT_PUBLIC_SOLANA_PUBLIC_KEY);
 
 export default function Home() {
-	const [message, setMessage] = useState("");
-	const [uploadedURL, setUploadedURL] = useState("");
+	const [message, setMessage] = useState<string>("");
+	const [uploadedURL, setUploadedURL] = useState<string>("");
 	const [fileToUpload, setFileToUpload] = useState();
-	const [fileType, setFileType] = useState();
+	const [fileType, setFileType] = useState<string>("");
+
+	const handleFile = async (e) => {
+		setMessage("");
+		const newFiles = e.target.files;
+		if (newFiles.length === 0) return;
+
+		setFileToUpload(newFiles[0]);
+		setFileType(newFiles[0]["type"]);
+	};
 
 	const uploadDataBundlr = async () => {
 		// public key is stored/provided to the client
-		//const pubkey = await serverInit();
-		const pubkey = process.env.NEXT_PUBLIC_SOLANA_PUBLIC_KEY;
-
-		// mock provider
+		const pubKeyRes = (await (
+			await fetch("/api/publicKey")
+		).json()) as unknown as {
+			pubKey: Buffer;
+		};
+		const pubKey = Buffer.from(pubKeyRes.pubKey);
+		console.log("pubKey=", pubKey);
+		// provider
 		const provider = {
 			publicKey: {
-				toBuffer: () => pubkey,
+				toBuffer: () => pubKey,
 				byteLength: 32,
 			},
-			signMessage: signDataOnServer,
+			signMessage: /* signDataOnServer(), */ async (
+				message: Uint8Array,
+			) => {
+				let convertedMsg = Buffer.from(message).toString("hex");
+				console.log({ message, convertedMsg });
+				const res = await fetch("/api/signData", {
+					method: "POST",
+					body: JSON.stringify({
+						signatureData: convertedMsg,
+					}),
+				});
+
+				const { signature } = await res.json();
+				return Buffer.from(signature);
+			},
 		};
+		console.log("provider=", provider);
+
 		const bundlr = new WebBundlr(
 			"https://devnet.bundlr.network",
 			"solana",
 			provider,
 		);
-		//tags
-		const tags = [
-			{ name: "Type", value: "manifest" },
-			{
-				name: "Content-Type",
-				value: "application/x.arweave-manifest+json",
-			},
-		];
-		// example data (manifest)
-		const manifest = {
-			manifest: "arweave/paths",
-			version: "0.1.0",
-			paths: {
-				"basten.jpg": {
-					id: "cu2RWNO8T6t2zZ6f9FTIY5S_GY5A19jWfGp-fKBEAxk",
-				},
-			},
-		};
-		const transaction = bundlr.createTransaction(JSON.stringify(manifest), {
-			tags,
+		await bundlr.ready();
+		console.log("bundlr=", bundlr);
+		console.log("bundlr.address", bundlr.address);
+		console.log("fileToUpload=", fileToUpload);
+		const dataStream = fileReaderStream(fileToUpload);
+		const tx = bundlr.createTransaction("Hello, Bundlr!", {
+			tags: [{ name: "Content-Type", value: fileType }],
 		});
-		// get signature data
-		const signatureData = Buffer.from(await transaction.getSignatureData());
+		await tx.sign();
+		console.log(dataStream);
+		console.log(tx.getRaw());
+		// const tx = await bundlr.upload(dataStream, {
+		// 	tags: [{ name: "Content-Type", value: fileType }],
+		// });
 
-		await transaction.sign();
+		// const uploader = bundlr.uploader.chunkedUploader;
+		// uploader.setBatchSize(2);
+		// uploader.setChunkSize(2_000_000);
+		// const tx = await uploader.uploadData(dataStream, {
+		// 	tags: [{ name: "Content-Type", value: fileType }],
+		// });
+
+		console.log("signed tx=", tx);
 
 		// make sure isValid is true - don't worry about isSigned.
 		console.log({
-			isSigned: transaction.isSigned(),
-			isValid: await transaction.isValid(),
+			isSigned: tx.isSigned(),
+			isValid: await tx.isValid(),
 		});
+
 		// upload as normal
-		const res = await transaction.upload();
+		const res = await tx.upload();
 		console.log(res);
-	};
-
-	const uploadDataBundlr2 = async () => {
-		// mock provider
-		const provider = {
-			publicKey,
-			signMessage: () => {
-				return "serverSignature";
-			},
-		};
-		const bundlr = new WebBundlr(bundlrNode, "solana", provider);
-		await bundlr.ready();
-		console.log("bundlr", bundlr);
-		console.log("publicKey", publicKey);
-
-		const transaction = bundlr.createTransaction("Hello");
-
-		transaction.rawOwner = publicKey.toBuffer();
-
-		console.log("valid", await transaction.isValid());
-
-		// get signature data
-		const signatureData = await transaction.getSignatureData();
-		console.log("signatureData", signatureData);
-
-		// get signed signature
-		const signed = await fetch("/api/signBundlrTransaction", {
-			method: "POST",
-			body: JSON.stringify({
-				signatureData: arrayBufferToBase64(signatureData),
-				size: transaction.size,
-			}),
-		});
-		console.log("signed=", signed);
-		const json = await signed.json();
-
-		console.log(json);
-
-		const signature = new Uint8Array(base64ToArrayBuffer(json.signature));
-
-		// write signed signature to transaction
-		await transaction.setSignature(Buffer.from(signature));
-
-		// check the tx is signed and valid
-		console.log({
-			isSigned: transaction.isSigned(),
-			isValid: await transaction.isValid(),
-		});
-
-		// upload as normal
-		const result = await transaction.upload();
-
-		console.log(result);
+		console.log(`File uploaded ==> https://arweave.net/${tx.id}`);
 	};
 
 	return (
@@ -156,7 +131,7 @@ export default function Home() {
 						<div className="flex flex-row">
 							<input
 								type="file"
-								onChange={uploadDataBundlr}
+								onChange={handleFile}
 								className="w-1/3 px-1 py-1 block text-sm text-gray-900 border border-gray-300 rounded-lg cursor-pointer bg-gray-50 dark:text-gray-400 focus:outline-none dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400"
 								multiple="single"
 								name="files[]"
