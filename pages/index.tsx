@@ -59,7 +59,9 @@ export default function Home() {
 				});
 
 				const { signature } = await res.json();
-				return Buffer.from(signature);
+				const bSig = Buffer.from(signature, "hex");
+				console.log("sig", bSig.toJSON());
+				return bSig;
 			},
 		};
 		console.log("provider=", provider);
@@ -78,6 +80,8 @@ export default function Home() {
 			tags: [{ name: "Content-Type", value: fileType }],
 		});
 		await tx.sign();
+
+		console.log({ sig: tx.rawSignature, owner: tx.rawOwner });
 		console.log(dataStream);
 		console.log(tx.getRaw());
 		// const tx = await bundlr.upload(dataStream, {

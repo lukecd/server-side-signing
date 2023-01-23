@@ -1,6 +1,6 @@
 import Bundlr from "@bundlr-network/client/build/node";
 import type { NextApiRequest, NextApiResponse } from "next";
-
+import HexInjectedSolanaSigner from "arbundles/src/signing/chains/HexInjectedSolanaSigner";
 export async function signDataOnServer(signatureData: Buffer): Promise<Buffer> {
 	// nodeJS client
 	//return await serverBundlr.currencyConfig.sign(signatureData);
@@ -14,13 +14,25 @@ export async function signDataOnServer(signatureData: Buffer): Promise<Buffer> {
 
 	console.log("serverBundlr.address", serverBundlr.address);
 
-	const signature = Buffer.from(
-		await serverBundlr.currencyConfig.sign(
-			Buffer.from(Buffer.from(signatureData).toString("hex")),
-		),
+	console.log(
+		"serverBundlrPubKey",
+		//@ts-ignore
+		serverBundlr.currencyConfig.getPublicKey().toJSON(),
 	);
 
-	return signature;
+	const encodedMessage = Buffer.from(
+		Buffer.from(signatureData).toString("hex"),
+	);
+	const signature = await serverBundlr.currencyConfig.sign(encodedMessage);
+
+	const isValid = await HexInjectedSolanaSigner.verify(
+		serverBundlr.currencyConfig.getPublicKey() as Buffer,
+		signatureData,
+		signature,
+	);
+	console.log({ isValid });
+
+	return Buffer.from(signature);
 }
 // req: NextApiRequest,
 // res: NextApiResponse,
@@ -32,6 +44,9 @@ export default async function handler(
 	console.log("body.signatureData", body.signatureData);
 	const signatureData = Buffer.from(body.signatureData, "hex");
 	const signature = await signDataOnServer(signatureData);
-	console.log({ signatureData: signatureData.toJSON(), signature });
-	res.status(200).json({ signature });
+	console.log({
+		signatureData: signatureData.toJSON(),
+		signature: signature.toJSON(),
+	});
+	res.status(200).json({ signature: signature.toString("hex") });
 }
