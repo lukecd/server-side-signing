@@ -21,8 +21,13 @@ export async function signDataOnServer(signatureData: Buffer): Promise<Buffer> {
 	);
 
 	const encodedMessage = Buffer.from(
-		Buffer.from(signatureData).toString("hex"),
+		signatureData, //Buffer.from(signatureData).toString("hex"), // it was signing as if it were a solanaSigner, not a hexSolanaSigner. the hex conversion was done already!
 	);
+	console.log("signatureData.length=", signatureData.length);
+	const price = await serverBundlr.getPrice(signatureData.length);
+	console.log("price=", price.toString());
+	await serverBundlr.fund(price);
+	console.log("successfully funded");
 	const signature = await serverBundlr.currencyConfig.sign(encodedMessage);
 
 	const isValid = await HexInjectedSolanaSigner.verify(
