@@ -5,19 +5,11 @@ import { useState } from "react";
 import WebBundlr from "@bundlr-network/client/build/web";
 import { PublicKey } from "@solana/web3.js";
 import fileReaderStream from "filereader-stream";
-
-if (
-	!process.env.NEXT_PUBLIC_BUNDLR_NETWORK_NODE ||
-	!process.env.NEXT_PUBLIC_SOLANA_PUBLIC_KEY
-) {
-	throw new Error("Missing env variables.");
-}
-
-const bundlrNode = process.env.NEXT_PUBLIC_BUNDLR_NETWORK_NODE;
-const publicKey = new PublicKey(process.env.NEXT_PUBLIC_SOLANA_PUBLIC_KEY);
+import * as fs from "fs";
 
 export default function Home() {
 	const [message, setMessage] = useState<string>("");
+	const [fileUploadedURL, setFileUploadedURL] = useState<string>("");
 	const [uploadedURL, setUploadedURL] = useState<string>("");
 	const [fileToUpload, setFileToUpload] = useState();
 	const [fileType, setFileType] = useState<string>("");
@@ -31,6 +23,9 @@ export default function Home() {
 		setFileType(newFiles[0]["type"]);
 	};
 
+	/**
+	 * Called when a user clicks the "Upload" button
+	 */
 	const uploadDataBundlr = async () => {
 		// clear the message
 		setMessage("");
@@ -40,23 +35,22 @@ export default function Home() {
 			setMessage("Please choose a file to upload first.");
 			return;
 		}
-		// public key is stored/provided to the client
+
+		// obtain the server's public key
 		const pubKeyRes = (await (
 			await fetch("/api/publicKey")
 		).json()) as unknown as {
 			pubKey: string;
 		};
 		const pubKey = Buffer.from(pubKeyRes.pubKey, "hex");
-		console.log("pubKey=", pubKey);
-		// provider
+
+		// create a provider
 		const provider = {
 			publicKey: {
 				toBuffer: () => pubKey,
 				byteLength: 32,
 			},
-			signMessage: /* signDataOnServer(), */ async (
-				message: Uint8Array,
-			) => {
+			signMessage: async (message: Uint8Array) => {
 				let convertedMsg = Buffer.from(message).toString("hex");
 				const res = await fetch("/api/signData", {
 					method: "POST",
@@ -69,59 +63,82 @@ export default function Home() {
 				return bSig;
 			},
 		};
-		console.log("provider=", provider);
 
+		// if your app is lazy-funding uploads, this next section
+		// can be used. alternatively you can delete this section and
+		// do a bulk up-front funding of a node.
+		// 1. first create the datastream and get the size
+		const dataStream = fileReaderStream(fileToUpload);
+
+		// 2. then pass the size to the lazyFund API route
+		const fundTx = await fetch("/api/lazyFund", {
+			method: "POST",
+			body: dataStream.size,
+		});
+
+		console.log("Funding successful fundTx=", fundTx);
+
+		// finally create a new WebBundlr object using the
+		// provider created with server info.
 		const bundlr = new WebBundlr(
 			"https://devnet.bundlr.network",
 			"solana",
 			provider,
 		);
 		await bundlr.ready();
-		console.log("bundlr=", bundlr);
-		console.log("bundlr.address", bundlr.address);
-		console.log("fileToUpload=", fileToUpload);
-		const dataStream = fileReaderStream(fileToUpload);
-		const tx = bundlr.createTransaction("Hello, Bundlr!", {
+		console.log("bundlr.ready()=", bundlr);
+
+		// and upload the file
+		const tx = await bundlr.upload(dataStream, {
 			tags: [{ name: "Content-Type", value: fileType }],
 		});
+		console.log("upload tx=", tx);
 
-		await tx.sign();
-		//@ts-ignore
-		// const tx2 = bundlr.createTransaction(tx.getRaw(), { dataIsRawTransaction: true });
-		// await tx2.sign();
-		// const signature = await provider.signMessage(await tx.getSignatureData());
-		// await tx.setSignature(signature);
-
-		console.log({
-			sig: tx.rawSignature,
-			owner: tx.rawOwner,
-			data: tx.rawData.toString(),
-		});
-		console.log(dataStream);
-		console.log(tx.getRaw());
-		// const tx = await bundlr.upload(dataStream, {
-		// 	tags: [{ name: "Content-Type", value: fileType }],
-		// });
-
-		// const uploader = bundlr.uploader.chunkedUploader;
-		// uploader.setBatchSize(2);
-		// uploader.setChunkSize(2_000_000);
-		// const tx = await uploader.uploadData(dataStream, {
-		// 	tags: [{ name: "Content-Type", value: fileType }],
-		// });
-
-		console.log("signed tx=", tx);
-
-		// make sure isValid is true - don't worry about isSigned.
-		console.log({
-			isSigned: tx.isSigned(),
-			isValid: await tx.isValid(),
-		});
-
-		// upload as normal
-		const res = await tx.upload();
-		console.log(res);
+		// and share the results
 		console.log(`File uploaded ==> https://arweave.net/${tx.id}`);
+		setMessage(`File uploaded ==>`);
+		setFileUploadedURL("https://arweave.net/" + tx.id);
+
+		// const tx = bundlr.createTransaction(dataStream, {
+		// 	tags: [{ name: "Content-Type", value: fileType }],
+		// });
+
+		// await tx.sign();
+		// //@ts-ignore
+		// // const tx2 = bundlr.createTransaction(tx.getRaw(), { dataIsRawTransaction: true });
+		// // await tx2.sign();
+		// // const signature = await provider.signMessage(await tx.getSignatureData());
+		// // await tx.setSignature(signature);
+
+		// console.log({
+		// 	sig: tx.rawSignature,
+		// 	owner: tx.rawOwner,
+		// 	data: tx.rawData.toString(),
+		// });
+		// console.log(dataStream);
+		// console.log(tx.getRaw());
+		// // const tx = await bundlr.upload(dataStream, {
+		// // 	tags: [{ name: "Content-Type", value: fileType }],
+		// // });
+
+		// // const uploader = bundlr.uploader.chunkedUploader;
+		// // uploader.setBatchSize(2);
+		// // uploader.setChunkSize(2_000_000);
+		// // const tx = await uploader.uploadData(dataStream, {
+		// // 	tags: [{ name: "Content-Type", value: fileType }],
+		// // });
+
+		// console.log("signed tx=", tx);
+
+		// // make sure isValid is true - don't worry about isSigned.
+		// console.log({
+		// 	isSigned: tx.isSigned(),
+		// 	isValid: await tx.isValid(),
+		// });
+
+		// // upload as normal
+		// const res = await tx.upload();
+		// console.log(res);
 	};
 
 	return (
@@ -166,6 +183,17 @@ export default function Home() {
 						<p className="text-messageText text-sm text-red">
 							{message}
 						</p>
+						{fileUploadedURL && (
+							<p className="text-messageText text-sm text-red">
+								<a
+									className="underline"
+									href={fileUploadedURL}
+									target="_blank"
+								>
+									{fileUploadedURL}
+								</a>
+							</p>
+						)}
 						<p className="text-black text-sm">
 							{uploadedURL && (
 								<a

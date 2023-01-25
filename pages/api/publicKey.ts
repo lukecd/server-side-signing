@@ -1,16 +1,25 @@
 import Bundlr from "@bundlr-network/client/build/node";
 import { NextApiRequest, NextApiResponse } from "next";
 
+/**
+ *
+ * @returns The server's private key.
+ */
 export async function serverInit(): Promise<Buffer> {
-	const key = process.env.SOLANA_PRIVATE_KEY; // your private key
+	const key = process.env.PAYMENT_PRIVATE_KEY; // your private key
+	const bundlrNodeAddress = process.env.BUNDLR_NODE_ADDRESS;
+	const rpcUrl = process.env.RPC;
+
 	const serverBundlr = new Bundlr(
-		"https://devnet.bundlr.network",
+		//@ts-ignore
+		bundlrNodeAddress,
 		"solana",
 		key,
+		{
+			providerUrl: rpcUrl,
+		},
 	);
 	const publicKey = serverBundlr.currencyConfig.getSigner().publicKey;
-	console.log("publicKey.ts serverBundlr.address=", serverBundlr.address);
-	console.log("serverInit: publicKey=", publicKey);
 	return publicKey;
 }
 
